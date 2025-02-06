@@ -1,3 +1,4 @@
+<!DOCTYPE html>
 <html>
 <head>
   <meta charset="utf-8">
@@ -11,6 +12,9 @@
   <script src="https://unpkg.com/graphlib-dot@0.6.4/dist/graphlib-dot.min.js"></script>
   <!-- Material Components Web CSS -->
   <link rel="stylesheet" href="https://unpkg.com/material-components-web@latest/dist/material-components-web.min.css">
+  
+  <!-- Load nunjucks directly so it is available globally -->
+  <script src="https://unpkg.com/nunjucks@3.2.4/browser/nunjucks.js"></script>
   
   <style>
     body { margin: 0; }
@@ -30,7 +34,6 @@
       cursor: col-resize;
       background-color: #ddd;
     }
-    /* Optional: Style the download buttons */
     .download-buttons {
       margin-top: 16px;
     }
@@ -38,16 +41,34 @@
       margin-right: 8px;
     }
   </style>
+  
+  <!-- Load RequireJS (only used here for Monaco) -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.3.6/require.min.js"></script>
+  <script>
+require.config({
+  paths: {
+    'nunjucks': 'https://unpkg.com/browse/nunjucks@3.1.0/browser/nunjucks.js',
+    'vs': 'https://unpkg.com/monaco-editor@0.33.0/min/vs'
+  },
+  shim: {
+    'nunjucks': {
+      exports: 'nunjucks'
+    }
+  }
+});
+
+require(['nunjucks'], function(nunjucksInstance) {
+  nunjucks = nunjucksInstance;
+});
+  </script>
 </head>
 <body>
   <div class="container">
     <!-- Left: YAML Editor (using Monaco) -->
     <div class="editor" id="leftPane">
       <h2 class="mdc-typography--headline6">YAML Editor</h2>
-      <!-- Monaco editor container -->
       <div id="yamlEditor" style="height: 80vh;"></div>
       <br>
-      <!-- Material Button for manual update if desired -->
       <button id="updateYaml" class="mdc-button mdc-button--raised">
         <span class="mdc-button__label">Update YAML Now</span>
       </button>
@@ -59,7 +80,6 @@
     <!-- Right: Preview Area -->
     <div class="preview">
       <div class="controls">
-        <!-- Preview Mode Selector using MDC select style -->
         <div class="mdc-select inline-control" id="previewModeSelect">
           <select id="previewMode" class="mdc-select__native-control">
             <option value="graph">Graph</option>
@@ -67,16 +87,13 @@
           </select>
           <div class="mdc-line-ripple"></div>
         </div>
-        <!-- Secondary selector (populated dynamically) -->
         <span id="selectionContainer" class="inline-control"></span>
-        <!-- Slider for animation frame (only visible in animation mode) -->
         <span id="sliderContainer" style="display:none; margin-left: 16px;" class="inline-control">
           <label class="mdc-typography--body2" for="animSlider">Frame:</label>
           <input type="range" id="animSlider" min="0" max="0" value="0">
         </span>
       </div>
       
-      <!-- Extra Animation Controls (only visible in animation mode) -->
       <div id="animExtraControls" class="anim-extra-controls" style="display:none;">
         <button id="playBtn" class="mdc-button mdc-button--raised inline-control">
           <span class="mdc-button__label">Play</span>
@@ -90,7 +107,6 @@
         <button id="rewindBtn" class="mdc-button mdc-button--raised inline-control">
           <span class="mdc-button__label">Rewind</span>
         </button>
-        <!-- Material styled Checkbox -->
         <div class="mdc-form-field inline-control">
           <div class="mdc-checkbox">
             <input type="checkbox" id="loopCheckbox" class="mdc-checkbox__native-control">
@@ -103,7 +119,6 @@
           </div>
           <label for="loopCheckbox">Loop</label>
         </div>
-        <!-- Slider for delay -->
         <span class="inline-control">
           <label class="mdc-typography--body2" for="delaySlider">Delay (ms):</label>
           <input type="range" id="delaySlider" min="250" max="5000" value="1500">
@@ -111,7 +126,6 @@
         </span>
       </div>
       
-      <!-- Download Buttons -->
       <div class="download-buttons">
         <button id="downloadDot" class="mdc-button mdc-button--raised">
           <span class="mdc-button__label">Download DOT</span>
@@ -121,111 +135,97 @@
         </button>
       </div>
       
-      <!-- Graph Rendering Area -->
       <div id="graph"></div>
     </div>
   </div>
   
-  <!-- Load RequireJS to load Monaco -->
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.3.6/require.min.js"></script>
-  
+  <!-- Application Scripts -->
   <script>
-    /**
-     * Preprocess DOT text to resolve node inheritance.
-     * Example input (without digraph block):
-     *   pod [style="invis" shape="box" real_style="filled"];
-     *   a [inherit="pod"];
-     *   a -> x;
-     *   b [inherit="pod" style=""] -> x;
-     *
-     * If the DOT text does not start with "digraph" or "graph", it is wrapped inside a "digraph { ... }" block.
-     *
-     * Resulting output:
-     *   digraph {
-     *     pod [style="invis" shape="box" real_style="filled"];
-     *     a [shape="box" real_style="filled"];
-     *     a -> x;
-     *     b [shape="box" real_style=""] -> x;
-     *   }
-     */
-    function preprocessDot(dotText) {
-      // TODO ALAS cant work with html labels eg node [label=<html here>] must found another parser
-      return dotText
-      // Ensure the DOT text is wrapped in a valid graph structure.
-      const trimmedText = dotText.trim();
-      if (!/^((digraph)|(graph))\b/.test(trimmedText)) {
-        dotText = "digraph {\n" + dotText + "\n}";
+    // Helper functions for processing DOT text.
+    function parseAttributes(attrStr) {
+      if (!attrStr) return {};
+      const attrs = {};
+      const regex = /(\w+)\s*=\s*(<([\s\S]*?)>|"([^"]*)"|([^",\s]+))/g;
+      let match;
+      while ((match = regex.exec(attrStr)) !== null) {
+        const key = match[1];
+        const value = match[3] !== undefined ? match[3] :
+                      match[4] !== undefined ? match[4] :
+                      match[5];
+        attrs[key] = value;
       }
-      
-      console.log("dotText", dotText);
-      // Parse the DOT text into a graph object.
-      const graph = graphlibDot.read(dotText);
-      console.log("going check effective");
-      const effectiveCache = {};
-
-      // Recursively compute the effective attributes for a node.
-      function computeEffectiveAttributes(nodeId) {
-        if (effectiveCache[nodeId]) return effectiveCache[nodeId];
-
-        // Copy the current node's attributes.
-        const nodeAttrs = Object.assign({}, graph.node(nodeId));
-        let effective = {};
-
-        // If there is an 'inherit' attribute, process each parent.
-        if (nodeAttrs.inherit && nodeAttrs.inherit.trim() !== "") {
-          const parents = nodeAttrs.inherit.split(",").map(s => s.trim());
-          parents.forEach(parentId => {
-            const parentEff = computeEffectiveAttributes(parentId);
-            // Clone parent's effective attributes.
-            const inherited = Object.assign({}, parentEff);
-            // If the parent's style is "invis", replace it with its real_style.
-            if (inherited.style === "invis") {
-              delete inherited.style;
-              if (inherited.real_style) inherited.style = inherited.real_style;
-            }
-            delete inherited.real_style;
-            effective = Object.assign({}, effective, inherited);
-          });
-        }
-
-        // Merge the node's own attributes (overriding inherited ones).
-        const ownAttrs = Object.assign({}, nodeAttrs);
-        delete ownAttrs.inherit;
-        effective = Object.assign({}, effective, ownAttrs);
-
-        // Remove invis style and handle any remaining real_style.
-        if (effective.style === "invis") delete effective.style;
-        if ("real_style" in effective) {
-          if (!("style" in effective)) effective.style = effective.real_style;
-          delete effective.real_style;
-        }
-        
-        effectiveCache[nodeId] = effective;
-        return effective;
-      }
-
-      // Update each node's attributes in the graph.
-      graph.nodes().forEach(nodeId => {
-        const attrs = graph.node(nodeId);
-        if (attrs && attrs.inherit) {
-          const effective = computeEffectiveAttributes(nodeId);
-          graph.setNode(nodeId, effective);
-        }
-      });
-
-      // Convert the graph back into DOT text.
-      return graphlibDot.write(graph);
+      return attrs;
     }
-    
-    /***********************
-     * Graph and Template Functions
-     ***********************/
-    
-    // Global arrays for common DOT fragments and template functions.
+
+    function stringifyAttributes(attrs) {
+      const parts = [];
+      for (let key in attrs) {
+        parts.push(key + '="' + attrs[key] + '"');
+      }
+      return parts.join(", ");
+    }
+
+function preprocessDot(dotText) {
+  console.log("Preprocessing DOT...", dotText);
+  const globalRegex = /(\w+)\s*\[\s*([^\]]+?)\s*\]/g;
+  let nodeDict = {};
+  let match;
+  while ((match = globalRegex.exec(dotText)) !== null) {
+     let nodeName = match[1];
+     let attrStr = match[2];
+     nodeDict[nodeName] = {
+         raw: attrStr,
+         attrs: parseAttributes(attrStr)
+     };
+  }
+  let effectiveCache = {};
+  function computeEffectiveAttributes(nodeName) {
+     if (effectiveCache[nodeName]) return effectiveCache[nodeName];
+     let node = nodeDict[nodeName];
+     if (!node) return {};
+     let effective = {};
+     if (node.attrs.inherit && node.attrs.inherit.trim() !== "") {
+          let parents = node.attrs.inherit.split(",").map(s => s.trim());
+          parents.forEach(parentName => {
+             let parentEff = computeEffectiveAttributes(parentName);
+             let inherited = Object.assign({}, parentEff);
+             if (inherited.style === "invis") {
+                delete inherited.style;
+                if (inherited.real_style) inherited.style = inherited.real_style;
+             }
+             delete inherited.real_style;
+             effective = Object.assign({}, effective, inherited);
+          });
+     }
+     let ownAttrs = Object.assign({}, node.attrs);
+     delete ownAttrs.inherit;
+     effective = Object.assign({}, effective, ownAttrs);
+     if (effective.style === "invis") delete effective.style;
+     if ("real_style" in effective) {
+         if (!("style" in effective)) effective.style = effective.real_style;
+         delete effective.real_style;
+     }
+     effectiveCache[nodeName] = effective;
+     return effective;
+  }
+  
+  let replaced = dotText.replace(globalRegex, function(fullMatch, nodeName, attrStr) {
+     let attrs = parseAttributes(attrStr);
+     if (!attrs.inherit) return fullMatch;
+     let effective = computeEffectiveAttributes(nodeName);
+     let newAttrStr = stringifyAttributes(effective);
+     return nodeName + " [ " + newAttrStr + " ]";
+  });
+
+  console.log("replaced...", replaced);
+  return replaced;
+}
+
+        
+    // Template and common code processing functions.
     let commons = [];
     let templateFunctions = [];
     
-    // This function prepends common DOT fragments (previously in "templates") to the given dot string.
     function includeCommons(dot) {
       if (commons && commons.length > 0) {
         let commonCode = "";
@@ -238,33 +238,67 @@
       }
       return dot;
     }
-    
-    // New function: look for template invocations using a function-call style.
-    // Example: {{ kubernetes.deployment("my-dp", "my-ns") }}
+
     function renderTemplatesInDot(dot) {
-      return dot.replace(/{{\s*([a-zA-Z0-9_.-]+)\s*\(([^)]+)\)\s*}}/g, function(match, funcName, argsString) {
-        // Split the argument string by comma and remove surrounding quotes.
-        let argsValues = argsString.split(",").map(s => s.trim().replace(/^['"]|['"]$/g, ""));
-        // Look up the template function by its name.
-        let tmpl = templateFunctions.find(t => t.name === funcName);
-        if (!tmpl) {
-          console.warn("Template function not found:", funcName);
-          return match;
+      console.log("Rendering templates in DOT...",dot);
+      let context = {
+        include: function(graphName) {
+          let importedDot = getGraphDot(graphName);
+          if (!importedDot) {
+            console.warn("Graph not found for include:", graphName);
+            return "";
+          }
+          importedDot = applyTemplateProcessing(importedDot);
+          importedDot = preprocessDot(importedDot);
+          importedDot = ensureGraphWrapper(importedDot);
+          return importedDot;
         }
-        let rendered = tmpl.template;
-        // For each declared argument in the template, replace placeholders in the template string.
-        if (tmpl.args && Array.isArray(tmpl.args)) {
-          tmpl.args.forEach((argName, index) => {
-            let value = argsValues[index] || "";
-            let re = new RegExp("{{\\s*" + argName + "\\s*}}", "g");
-            rendered = rendered.replace(re, value);
-          });
-        }
+      };
+      context.import = context.include;
+
+      if (Array.isArray(templateFunctions)) {
+        templateFunctions.forEach(tmpl => {
+          let parts = tmpl.name.split(".");
+          if (parts.length === 2) {
+            let ns = parts[0],
+                funcName = parts[1];
+            if (!context[ns]) {
+              context[ns] = {};
+            }
+            context[ns][funcName] = function(...args) {
+              let localContext = {};
+              if (Array.isArray(tmpl.args)) {
+                tmpl.args.forEach((argName, index) => {
+                  localContext[argName] = args[index] || "";
+                });
+              }
+              return nunjucks.configure({ autoescape: false }).renderString(tmpl.template, localContext);
+            };
+          } else {
+            context[tmpl.name] = function(...args) {
+              let localContext = {};
+              if (Array.isArray(tmpl.args)) {
+                tmpl.args.forEach((argName, index) => {
+                  localContext[argName] = args[index] || "";
+                });
+              }
+              return nunjucks.configure({ autoescape: false }).renderString(tmpl.template, localContext);
+            };
+          }
+        });
+      }
+
+      try {
+         console.log("Rendering",dot, context);
+        let rendered = nunjucks.configure({ autoescape: false }).renderString(dot, context);
+        console.log("Rendered nunjuchs",rendered);
         return rendered;
-      });
+      } catch (err) {
+        console.error("Error during nunjucks template rendering:", err);
+        throw err
+      }
     }
     
-    // Combine the common inclusion and the new template rendering.
     function applyTemplateProcessing(dot) {
       dot = includeCommons(dot);
       dot = renderTemplatesInDot(dot);
@@ -272,6 +306,7 @@
     }
     
     function getGraphDot(graphName, visited = new Set()) {
+      console.log("giving gprahDot", graphName)
       if (visited.has(graphName)) {
         console.warn("Cycle detected in includes for graph:", graphName);
         return "";
@@ -291,6 +326,7 @@
       if (graphDef.dot) {
         dotContent += graphDef.dot + "\n";
       }
+      console.log("giving result graphdot", dotContent)
       return dotContent;
     }
     
@@ -302,9 +338,7 @@
       }
     }
     
-    /***********************
-     * Draggable Divider Code
-     ***********************/
+    // Draggable divider code.
     const dragbar = document.getElementById("dragbar");
     const leftPane = document.getElementById("leftPane");
     let isDragging = false;
@@ -332,9 +366,7 @@
       }
     });
     
-    /***********************
-     * Global Variables
-     ***********************/
+    // Global Variables.
     let yamlData = null;
     let graphMap = {};
     let animations = {};
@@ -349,28 +381,35 @@
     let animationDelay = 1500;
     let isTransitioning = false;
     let yamlDebounceTimer = null;
-    
-    /***********************
-     * Initialize Monaco Editor
-     ***********************/
-    require.config({ paths: { 'vs': 'https://unpkg.com/monaco-editor@0.33.0/min/vs' }});
+  </script>
+  
+  <!-- Initialize Monaco Editor -->
+  <script>
     require(['vs/editor/editor.main'], function() {
       monaco.languages.register({ id: 'yaml' });
       monacoEditor = monaco.editor.create(document.getElementById('yamlEditor'), {
         value: `---
 graphs:
-  - name: graph
+  - name: graph1
     dot: |-
         pod [style="invis" shape="box" real_style="filled"]
-        a [inherit="pod" ]
-        a -> x
-        a -> y 
-        {{ kubernetes.deployment("my-dp","my-ns") }}
-        # should give via template render then prop merge:
-        # b [label="my-dp - my-ns" ] 
+
+  - name: graph2
+    dot: |-
+      # is a Jinja template
+      # special function include should return dot content of graph1
+      {{ include("graph1") }}
+      # any template is registered as function => should return resolved k8s.deployement template function
+      {{ k8s.dp("my-dp", "my-ns")}}
+
+animation:
+  - name: anim1
+    graphs:
+      - graph1
+      - graph2
 
 templates:
-  - name: kubernetes.deployment
+  - name: k8s.dp
     template: |-
       [label="{{ name }} - {{ namespace }}" ]
     args:
@@ -389,10 +428,10 @@ templates:
       
       parseYaml();
     });
-
-    /***********************
-     * YAML Parsing and Data Setup
-     ***********************/
+  </script>
+  
+  <!-- Application Logic -->
+  <script>
     function parseYaml() {
       try {
         const doc = jsyaml.load(monacoEditor.getValue());
@@ -407,13 +446,11 @@ templates:
           });
         }
         
-        // Load commons (if any) from the YAML.
         commons = [];
         if (doc.commons && Array.isArray(doc.commons)) {
           commons = doc.commons;
         }
         
-        // Load new template functions.
         templateFunctions = [];
         if (doc.templates && Array.isArray(doc.templates)) {
           templateFunctions = doc.templates;
@@ -451,9 +488,6 @@ templates:
       }
     }
     
-    /***********************
-     * UI Updaters
-     ***********************/
     function updateSelectionDropdown() {
       const previewMode = document.getElementById('previewMode').value;
       const selectionContainer = document.getElementById('selectionContainer');
@@ -508,11 +542,15 @@ templates:
         if (!itemSelector) return;
         const graphName = itemSelector.value;
         let dot = getGraphDot(graphName);
-        // Process commons and template function calls.
+        console.log("got graph", dot)
         dot = applyTemplateProcessing(dot);
-        dot = preprocessDot(dot);
+        console.log("got templated", dot)
+        //dot = preprocessDot(dot);
+        //console.log("got pre-processed", dot)
         dot = ensureGraphWrapper(dot);
+        console.log("got wrapped", dot)
         isTransitioning = true;
+        console.log("graphvizRender", dot)
         graphviz.renderDot(dot)
           .on("end", function () { isTransitioning = false; })
           .on("error", function(error) {
@@ -561,9 +599,6 @@ templates:
         });
     }
     
-    /***********************
-     * Animation Control Functions
-     ***********************/
     function startAnimation() {
       if (isPlaying || currentAnimationFrames.length === 0) return;
       isPlaying = true;
@@ -650,9 +685,6 @@ templates:
       }
     }
     
-    /***********************
-     * Download Functionality
-     ***********************/
     function downloadText(text, filename) {
       const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
       const link = document.createElement("a");
@@ -698,9 +730,6 @@ templates:
     document.getElementById("downloadDot").addEventListener("click", downloadDot);
     document.getElementById("downloadSvg").addEventListener("click", downloadSvg);
     
-    /***********************
-     * Event Listeners
-     ***********************/
     document.getElementById('updateYaml').addEventListener('click', parseYaml);
     document.getElementById('previewMode').addEventListener('change', updateSelectionDropdown);
     
@@ -722,8 +751,6 @@ templates:
     document.getElementById('rewindBtn').addEventListener('click', rewindAnimation);
     
     document.getElementById('delaySlider').addEventListener('input', updateDelay);
-  </script>
-
-  </body>
+  </script> 
+</body>
 </html>
-
