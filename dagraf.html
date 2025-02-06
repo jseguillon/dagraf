@@ -242,17 +242,25 @@ function preprocessDot(dotText) {
     function renderTemplatesInDot(dot) {
       console.log("Rendering templates in DOT...",dot);
       let context = {
-        include: function(graphName) {
-          let importedDot = getGraphDot(graphName);
-          if (!importedDot) {
-            console.warn("Graph not found for include:", graphName);
-            return "";
-          }
-          importedDot = applyTemplateProcessing(importedDot);
-          importedDot = preprocessDot(importedDot);
-          importedDot = ensureGraphWrapper(importedDot);
-          return importedDot;
-        }
+include: function(graphName) {
+  let importedDot = getGraphDot(graphName);
+  if (!importedDot) {
+    console.warn("Graph not found for include:", graphName);
+    return "";
+  }
+  // Process the included graph content:
+  importedDot = applyTemplateProcessing(importedDot);
+  importedDot = preprocessDot(importedDot);
+  
+  // Unwrap an outer "digraph { ... }" or "graph { ... }" if present.
+  let wrapperRegex = /^\s*(digraph|graph)\s*\{\s*([\s\S]*?)\s*\}\s*$/;
+  let match = importedDot.match(wrapperRegex);
+  if (match) {
+    importedDot = match[2];
+  }
+  
+  return importedDot;
+}
       };
       context.import = context.include;
 
