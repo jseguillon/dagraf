@@ -1,0 +1,729 @@
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Graphviz YAML Editor & Animation Controls</title>
+  <!-- Load required libraries -->
+  <script src="https://d3js.org/d3.v7.min.js"></script>
+  <script src="https://unpkg.com/@hpcc-js/wasm@2.20.0/dist/graphviz.umd.js"></script>
+  <script src="https://unpkg.com/d3-graphviz@5.6.0/build/d3-graphviz.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/js-yaml/4.1.0/js-yaml.min.js"></script>
+  <script src="https://unpkg.com/graphlib@2.1.8/dist/graphlib.min.js"></script>
+  <script src="https://unpkg.com/graphlib-dot@0.6.4/dist/graphlib-dot.min.js"></script>
+  <!-- Material Components Web CSS -->
+  <link rel="stylesheet" href="https://unpkg.com/material-components-web@latest/dist/material-components-web.min.css">
+  
+  <style>
+    body { margin: 0; }
+    .container {
+      display: flex;
+      height: 100vh;
+      width: 100vw;
+    }
+    .editor, .preview {
+      padding: 16px;
+      overflow: auto;
+    }
+    .editor { width: 40%; border-right: 1px solid #ccc; }
+    .preview { flex-grow: 1; }
+    .dragbar {
+      width: 5px;
+      cursor: col-resize;
+      background-color: #ddd;
+    }
+    /* Optional: Style the download buttons */
+    .download-buttons {
+      margin-top: 16px;
+    }
+    .download-buttons button {
+      margin-right: 8px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <!-- Left: YAML Editor (using Monaco) -->
+    <div class="editor" id="leftPane">
+      <h2 class="mdc-typography--headline6">YAML Editor</h2>
+      <!-- Monaco editor container -->
+      <div id="yamlEditor" style="height: 80vh;"></div>
+      <br>
+      <!-- Material Button for manual update if desired -->
+      <button id="updateYaml" class="mdc-button mdc-button--raised">
+        <span class="mdc-button__label">Update YAML Now</span>
+      </button>
+    </div>
+
+    <!-- Dragbar -->
+    <div class="dragbar" id="dragbar"></div>
+    
+    <!-- Right: Preview Area -->
+    <div class="preview">
+      <div class="controls">
+        <!-- Preview Mode Selector using MDC select style -->
+        <div class="mdc-select inline-control" id="previewModeSelect">
+          <select id="previewMode" class="mdc-select__native-control">
+            <option value="graph">Graph</option>
+            <option value="animation">Animation</option>
+          </select>
+          <div class="mdc-line-ripple"></div>
+        </div>
+        <!-- Secondary selector (populated dynamically) -->
+        <span id="selectionContainer" class="inline-control"></span>
+        <!-- Slider for animation frame (only visible in animation mode) -->
+        <span id="sliderContainer" style="display:none; margin-left: 16px;" class="inline-control">
+          <label class="mdc-typography--body2" for="animSlider">Frame:</label>
+          <input type="range" id="animSlider" min="0" max="0" value="0">
+        </span>
+      </div>
+      
+      <!-- Extra Animation Controls (only visible in animation mode) -->
+      <div id="animExtraControls" class="anim-extra-controls" style="display:none;">
+        <button id="playBtn" class="mdc-button mdc-button--raised inline-control">
+          <span class="mdc-button__label">Play</span>
+        </button>
+        <button id="pauseBtn" class="mdc-button mdc-button--raised inline-control">
+          <span class="mdc-button__label">Pause</span>
+        </button>
+        <button id="stopBtn" class="mdc-button mdc-button--raised inline-control">
+          <span class="mdc-button__label">Stop</span>
+        </button>
+        <button id="rewindBtn" class="mdc-button mdc-button--raised inline-control">
+          <span class="mdc-button__label">Rewind</span>
+        </button>
+        <!-- Material styled Checkbox -->
+        <div class="mdc-form-field inline-control">
+          <div class="mdc-checkbox">
+            <input type="checkbox" id="loopCheckbox" class="mdc-checkbox__native-control">
+            <div class="mdc-checkbox__background">
+              <svg class="mdc-checkbox__checkmark" viewBox="0 0 24 24">
+                <path class="mdc-checkbox__checkmark-path" fill="none" stroke="white" d="M1.73,12.91 8.1,19.28 22.79,4.59"/>
+              </svg>
+              <div class="mdc-checkbox__mixedmark"></div>
+            </div>
+          </div>
+          <label for="loopCheckbox">Loop</label>
+        </div>
+        <!-- Slider for delay -->
+        <span class="inline-control">
+          <label class="mdc-typography--body2" for="delaySlider">Delay (ms):</label>
+          <input type="range" id="delaySlider" min="250" max="5000" value="1500">
+          <span id="delayValue">1500</span>
+        </span>
+      </div>
+      
+      <!-- Download Buttons -->
+      <div class="download-buttons">
+        <button id="downloadDot" class="mdc-button mdc-button--raised">
+          <span class="mdc-button__label">Download DOT</span>
+        </button>
+        <button id="downloadSvg" class="mdc-button mdc-button--raised">
+          <span class="mdc-button__label">Download SVG</span>
+        </button>
+      </div>
+      
+      <!-- Graph Rendering Area -->
+      <div id="graph"></div>
+    </div>
+  </div>
+  
+  <!-- Load RequireJS to load Monaco -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.3.6/require.min.js"></script>
+  
+  <script>
+    /**
+     * Preprocess DOT text to resolve node inheritance.
+     * Example input (without digraph block):
+     *   pod [style="invis" shape="box" real_style="filled"];
+     *   a [inherit="pod"];
+     *   a -> x;
+     *   b [inherit="pod" style=""] -> x;
+     *
+     * If the DOT text does not start with "digraph" or "graph", it is wrapped inside a "digraph { ... }" block.
+     *
+     * Resulting output:
+     *   digraph {
+     *     pod [style="invis" shape="box" real_style="filled"];
+     *     a [shape="box" real_style="filled"];
+     *     a -> x;
+     *     b [shape="box" real_style=""] -> x;
+     *   }
+     */
+    function preprocessDot(dotText) {
+      // TODO ALAS cant work with html labels eg node [label=<html here>] must found another parser
+      return dotText
+      // Ensure the DOT text is wrapped in a valid graph structure.
+      const trimmedText = dotText.trim();
+      if (!/^((digraph)|(graph))\b/.test(trimmedText)) {
+        dotText = "digraph {\n" + dotText + "\n}";
+      }
+      
+      console.log("dotText", dotText);
+      // Parse the DOT text into a graph object.
+      const graph = graphlibDot.read(dotText);
+      console.log("going check effective");
+      const effectiveCache = {};
+
+      // Recursively compute the effective attributes for a node.
+      function computeEffectiveAttributes(nodeId) {
+        if (effectiveCache[nodeId]) return effectiveCache[nodeId];
+
+        // Copy the current node's attributes.
+        const nodeAttrs = Object.assign({}, graph.node(nodeId));
+        let effective = {};
+
+        // If there is an 'inherit' attribute, process each parent.
+        if (nodeAttrs.inherit && nodeAttrs.inherit.trim() !== "") {
+          const parents = nodeAttrs.inherit.split(",").map(s => s.trim());
+          parents.forEach(parentId => {
+            const parentEff = computeEffectiveAttributes(parentId);
+            // Clone parent's effective attributes.
+            const inherited = Object.assign({}, parentEff);
+            // If the parent's style is "invis", replace it with its real_style.
+            if (inherited.style === "invis") {
+              delete inherited.style;
+              if (inherited.real_style) inherited.style = inherited.real_style;
+            }
+            delete inherited.real_style;
+            effective = Object.assign({}, effective, inherited);
+          });
+        }
+
+        // Merge the node's own attributes (overriding inherited ones).
+        const ownAttrs = Object.assign({}, nodeAttrs);
+        delete ownAttrs.inherit;
+        effective = Object.assign({}, effective, ownAttrs);
+
+        // Remove invis style and handle any remaining real_style.
+        if (effective.style === "invis") delete effective.style;
+        if ("real_style" in effective) {
+          if (!("style" in effective)) effective.style = effective.real_style;
+          delete effective.real_style;
+        }
+        
+        effectiveCache[nodeId] = effective;
+        return effective;
+      }
+
+      // Update each node's attributes in the graph.
+      graph.nodes().forEach(nodeId => {
+        const attrs = graph.node(nodeId);
+        if (attrs && attrs.inherit) {
+          const effective = computeEffectiveAttributes(nodeId);
+          graph.setNode(nodeId, effective);
+        }
+      });
+
+      // Convert the graph back into DOT text.
+      return graphlibDot.write(graph);
+    }
+    
+    /***********************
+     * Graph and Template Functions
+     ***********************/
+    
+    // Global arrays for common DOT fragments and template functions.
+    let commons = [];
+    let templateFunctions = [];
+    
+    // This function prepends common DOT fragments (previously in "templates") to the given dot string.
+    function includeCommons(dot) {
+      if (commons && commons.length > 0) {
+        let commonCode = "";
+        commons.forEach(c => {
+          if (c.dot) {
+            commonCode += c.dot + "\n";
+          }
+        });
+        dot = commonCode + dot;
+      }
+      return dot;
+    }
+    
+    // New function: look for template invocations using a function-call style.
+    // Example: {{ kubernetes.deployment("my-dp", "my-ns") }}
+    function renderTemplatesInDot(dot) {
+      return dot.replace(/{{\s*([a-zA-Z0-9_.-]+)\s*\(([^)]+)\)\s*}}/g, function(match, funcName, argsString) {
+        // Split the argument string by comma and remove surrounding quotes.
+        let argsValues = argsString.split(",").map(s => s.trim().replace(/^['"]|['"]$/g, ""));
+        // Look up the template function by its name.
+        let tmpl = templateFunctions.find(t => t.name === funcName);
+        if (!tmpl) {
+          console.warn("Template function not found:", funcName);
+          return match;
+        }
+        let rendered = tmpl.template;
+        // For each declared argument in the template, replace placeholders in the template string.
+        if (tmpl.args && Array.isArray(tmpl.args)) {
+          tmpl.args.forEach((argName, index) => {
+            let value = argsValues[index] || "";
+            let re = new RegExp("{{\\s*" + argName + "\\s*}}", "g");
+            rendered = rendered.replace(re, value);
+          });
+        }
+        return rendered;
+      });
+    }
+    
+    // Combine the common inclusion and the new template rendering.
+    function applyTemplateProcessing(dot) {
+      dot = includeCommons(dot);
+      dot = renderTemplatesInDot(dot);
+      return dot;
+    }
+    
+    function getGraphDot(graphName, visited = new Set()) {
+      if (visited.has(graphName)) {
+        console.warn("Cycle detected in includes for graph:", graphName);
+        return "";
+      }
+      visited.add(graphName);
+      const graphDef = graphMap[graphName];
+      if (!graphDef) {
+        console.warn("Graph", graphName, "not found.");
+        return "";
+      }
+      let dotContent = "";
+      if (graphDef.includes && Array.isArray(graphDef.includes)) {
+        graphDef.includes.forEach(includeName => {
+          dotContent += getGraphDot(includeName, visited) + "\n";
+        });
+      }
+      if (graphDef.dot) {
+        dotContent += graphDef.dot + "\n";
+      }
+      return dotContent;
+    }
+    
+    function ensureGraphWrapper(dot) {
+      if (/^\s*(digraph|graph)\s*\{/.test(dot)) {
+        return dot;
+      } else {
+        return "digraph {\n" + dot + "\n}";
+      }
+    }
+    
+    /***********************
+     * Draggable Divider Code
+     ***********************/
+    const dragbar = document.getElementById("dragbar");
+    const leftPane = document.getElementById("leftPane");
+    let isDragging = false;
+
+    dragbar.addEventListener("mousedown", function(e) {
+      isDragging = true;
+      document.body.style.cursor = "col-resize";
+    });
+
+    document.addEventListener("mousemove", function(e) {
+      if (!isDragging) return;
+      const containerOffsetLeft = document.querySelector('.container').offsetLeft;
+      let newWidth = e.clientX - containerOffsetLeft;
+      const minWidth = 150;
+      const maxWidth = window.innerWidth - 150;
+      if (newWidth < minWidth) newWidth = minWidth;
+      if (newWidth > maxWidth) newWidth = maxWidth;
+      leftPane.style.width = newWidth + "px";
+    });
+
+    document.addEventListener("mouseup", function() {
+      if (isDragging) {
+        isDragging = false;
+        document.body.style.cursor = "default";
+      }
+    });
+    
+    /***********************
+     * Global Variables
+     ***********************/
+    let yamlData = null;
+    let graphMap = {};
+    let animations = {};
+    let monacoEditor = null;
+
+    const graphviz = d3.select("#graph").graphviz().logEvents(true);
+
+    let animationTimer = null;
+    let isPlaying = false;
+    let currentFrameIndex = 0;
+    let currentAnimationFrames = [];
+    let animationDelay = 1500;
+    let isTransitioning = false;
+    let yamlDebounceTimer = null;
+    
+    /***********************
+     * Initialize Monaco Editor
+     ***********************/
+    require.config({ paths: { 'vs': 'https://unpkg.com/monaco-editor@0.33.0/min/vs' }});
+    require(['vs/editor/editor.main'], function() {
+      monaco.languages.register({ id: 'yaml' });
+      monacoEditor = monaco.editor.create(document.getElementById('yamlEditor'), {
+        value: `---
+graphs:
+  - name: graph
+    dot: |-
+        pod [style="invis" shape="box" real_style="filled"]
+        a [inherit="pod" ]
+        a -> x
+        a -> y 
+        {{ kubernetes.deployment("my-dp","my-ns") }}
+        # should give via template render then prop merge:
+        # b [label="my-dp - my-ns" ] 
+
+templates:
+  - name: kubernetes.deployment
+    template: |-
+      [label="{{ name }} - {{ namespace }}" ]
+    args:
+      - name
+      - namespace
+`,
+        language: 'yaml',
+        theme: 'vs-dark',
+        automaticLayout: true
+      });
+      
+      monacoEditor.onDidChangeModelContent(function() {
+        clearTimeout(yamlDebounceTimer);
+        yamlDebounceTimer = setTimeout(parseYaml, 500);
+      });
+      
+      parseYaml();
+    });
+
+    /***********************
+     * YAML Parsing and Data Setup
+     ***********************/
+    function parseYaml() {
+      try {
+        const doc = jsyaml.load(monacoEditor.getValue());
+        yamlData = doc;
+        
+        graphMap = {};
+        if (doc.graphs && Array.isArray(doc.graphs)) {
+          doc.graphs.forEach(g => {
+            if (g.name) {
+              graphMap[g.name] = g;
+            }
+          });
+        }
+        
+        // Load commons (if any) from the YAML.
+        commons = [];
+        if (doc.commons && Array.isArray(doc.commons)) {
+          commons = doc.commons;
+        }
+        
+        // Load new template functions.
+        templateFunctions = [];
+        if (doc.templates && Array.isArray(doc.templates)) {
+          templateFunctions = doc.templates;
+        }
+        
+        animations = {};
+        if (doc.animation && Array.isArray(doc.animation)) {
+          doc.animation.forEach(anim => {
+            if (anim.name && Array.isArray(anim.graphs)) {
+              animations[anim.name] = anim.graphs;
+            }
+          });
+        }
+        
+        if (!isPlaying) {
+          pauseAnimation();
+        }
+        
+        updateSelectionDropdown();
+        
+        if (document.getElementById('previewMode').value === "animation") {
+          const animName = document.getElementById('itemSelector').value;
+          currentAnimationFrames = animations[animName] || [];
+          if (currentAnimationFrames.length === 0) {
+            currentFrameIndex = 0;
+          } else if (currentFrameIndex >= currentAnimationFrames.length) {
+            currentFrameIndex = currentAnimationFrames.length - 1;
+          }
+          renderAnimationFrame(currentFrameIndex);
+        } else {
+          updatePreview();
+        }
+      } catch (e) {
+        console.error("Error parsing YAML:", e);
+      }
+    }
+    
+    /***********************
+     * UI Updaters
+     ***********************/
+    function updateSelectionDropdown() {
+      const previewMode = document.getElementById('previewMode').value;
+      const selectionContainer = document.getElementById('selectionContainer');
+      
+      let select = selectionContainer.querySelector('#itemSelector');
+      let previousValue = null;
+      if (select) {
+        previousValue = select.value;
+        select.innerHTML = "";
+      } else {
+        select = document.createElement('select');
+        select.id = "itemSelector";
+        select.classList.add("mdc-select__native-control");
+      }
+      
+      if (previewMode === "graph") {
+        document.getElementById('sliderContainer').style.display = "none";
+        document.getElementById('animExtraControls').style.display = "none";
+        for (let name in graphMap) {
+          let option = document.createElement('option');
+          option.value = name;
+          option.textContent = name;
+          select.appendChild(option);
+        }
+      } else if (previewMode === "animation") {
+        document.getElementById('sliderContainer').style.display = "inline-block";
+        document.getElementById('animExtraControls').style.display = "block";
+        for (let name in animations) {
+          let option = document.createElement('option');
+          option.value = name;
+          option.textContent = name;
+          select.appendChild(option);
+        }
+      }
+      
+      if (previousValue && select.querySelector(`option[value="${previousValue}"]`)) {
+        select.value = previousValue;
+      }
+      
+      selectionContainer.innerHTML = "";
+      const mdcSelectWrapper = document.createElement('div');
+      mdcSelectWrapper.classList.add("mdc-select");
+      mdcSelectWrapper.appendChild(select);
+      selectionContainer.appendChild(mdcSelectWrapper);
+      
+      updatePreview();
+    }
+    
+    function updatePreview() {
+      if (document.getElementById('previewMode').value === "graph") {
+        const itemSelector = document.getElementById('itemSelector');
+        if (!itemSelector) return;
+        const graphName = itemSelector.value;
+        let dot = getGraphDot(graphName);
+        // Process commons and template function calls.
+        dot = applyTemplateProcessing(dot);
+        dot = preprocessDot(dot);
+        dot = ensureGraphWrapper(dot);
+        isTransitioning = true;
+        graphviz.renderDot(dot)
+          .on("end", function () { isTransitioning = false; })
+          .on("error", function(error) {
+            isTransitioning = false;
+            console.error("Graphviz render error:", error);
+            document.getElementById("graph").innerHTML = "<div style='color:red;'>Graph rendering error. Please check your DOT input.</div>";
+          });
+      } else if (document.getElementById('previewMode').value === "animation") {
+        const itemSelector = document.getElementById('itemSelector');
+        if (!itemSelector) return;
+        const animName = itemSelector.value;
+        currentAnimationFrames = animations[animName] || [];
+        const slider = document.getElementById('animSlider');
+        slider.min = 0;
+        slider.max = currentAnimationFrames.length > 0 ? currentAnimationFrames.length - 1 : 0;
+        if (currentAnimationFrames.length > 0) {
+          if (currentFrameIndex >= currentAnimationFrames.length) {
+            currentFrameIndex = currentAnimationFrames.length - 1;
+          }
+          slider.value = currentFrameIndex;
+          renderAnimationFrame(currentFrameIndex);
+        } else {
+          console.log("No frames in animation.");
+        }
+      }
+    }
+    
+    function renderAnimationFrame(frameIndex) {
+      if (!currentAnimationFrames || currentAnimationFrames.length === 0) {
+        document.getElementById("graph").innerHTML = "No frames in animation.";
+        return;
+      }
+      const graphName = currentAnimationFrames[frameIndex];
+      let dot = getGraphDot(graphName);
+      dot = applyTemplateProcessing(dot);
+      dot = preprocessDot(dot);
+      dot = ensureGraphWrapper(dot);
+      document.getElementById("animSlider").value = frameIndex;
+      isTransitioning = true;
+      graphviz.renderDot(dot)
+        .on("end", function () { isTransitioning = false; })
+        .on("error", function(error) {
+          isTransitioning = false;
+          console.error("Graphviz render error:", error);
+          document.getElementById("graph").innerHTML = "<div style='color:red;'>Graph rendering error. Please check your DOT input.</div>";
+        });
+    }
+    
+    /***********************
+     * Animation Control Functions
+     ***********************/
+    function startAnimation() {
+      if (isPlaying || currentAnimationFrames.length === 0) return;
+      isPlaying = true;
+      updateGraphvizTransition();
+      scheduleNextFrame();
+    }
+    
+    function scheduleNextFrame() {
+      if (!isPlaying) return;
+      const effectiveDelay = Math.max(animationDelay, 250);
+      animationTimer = setTimeout(function () {
+        if (!isPlaying) return;
+        if (!isTransitioning) {
+          nextAnimationFrame();
+        }
+        scheduleNextFrame();
+      }, effectiveDelay);
+    }
+    
+    function nextAnimationFrame() {
+      currentFrameIndex++;
+      if (currentFrameIndex >= currentAnimationFrames.length) {
+        if (document.getElementById("loopCheckbox").checked) {
+          currentFrameIndex = 0;
+        } else {
+          pauseAnimation();
+          return;
+        }
+      }
+      renderAnimationFrame(currentFrameIndex);
+    }
+    
+    function pauseAnimation() {
+      isPlaying = false;
+      if (animationTimer) {
+        clearTimeout(animationTimer);
+        animationTimer = null;
+      }
+      updateGraphvizTransition();
+    }
+    
+    function stopAnimation() {
+      pauseAnimation();
+      currentFrameIndex = 0;
+      document.getElementById("animSlider").value = 0;
+      renderAnimationFrame(currentFrameIndex);
+    }
+    
+    function rewindAnimation() {
+      pauseAnimation();
+      currentFrameIndex = 0;
+      document.getElementById("animSlider").value = 0;
+      renderAnimationFrame(currentFrameIndex);
+    }
+    
+    function updateDelay() {
+      let newDelay = parseInt(document.getElementById("delaySlider").value);
+      if (isNaN(newDelay) || newDelay < 250) {
+        newDelay = 250;
+        document.getElementById("delaySlider").value = newDelay;
+      }
+      animationDelay = newDelay;
+      document.getElementById("delayValue").textContent = newDelay;
+      if (isPlaying) {
+        updateGraphvizTransition();
+      }
+    }
+    
+    function updateGraphvizTransition() {
+      if (isPlaying) {
+        graphviz.transition(function () {
+          return d3.transition("auto")
+                   .ease(d3.easeLinear)
+                   .delay(animationDelay)
+                   .duration(animationDelay);
+        });
+      } else {
+        graphviz.transition(function () {
+          return d3.transition("manual")
+                   .ease(d3.easeLinear)
+                   .delay(0)
+                   .duration(0);
+        });
+      }
+    }
+    
+    /***********************
+     * Download Functionality
+     ***********************/
+    function downloadText(text, filename) {
+      const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
+      const link = document.createElement("a");
+      link.href = URL.createObjectURL(blob);
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    }
+
+    function downloadDot() {
+      let dot = "";
+      const previewMode = document.getElementById('previewMode').value;
+      if (previewMode === "graph") {
+        const graphName = document.getElementById('itemSelector').value;
+        dot = getGraphDot(graphName);
+      } else if (previewMode === "animation") {
+        if (currentAnimationFrames.length === 0) {
+          alert("No frames in the current animation.");
+          return;
+        }
+        const graphName = currentAnimationFrames[currentFrameIndex];
+        dot = getGraphDot(graphName);
+      }
+      dot = applyTemplateProcessing(dot);
+      dot = preprocessDot(dot);
+      dot = ensureGraphWrapper(dot);
+      downloadText(dot, "graph.dot");
+    }
+
+    function downloadSvg() {
+      const graphContainer = document.getElementById("graph");
+      const svgElement = graphContainer.querySelector("svg");
+      if (!svgElement) {
+        alert("No SVG rendered yet.");
+        return;
+      }
+      const serializer = new XMLSerializer();
+      const svgString = serializer.serializeToString(svgElement);
+      downloadText(svgString, "graph.svg");
+    }
+    
+    document.getElementById("downloadDot").addEventListener("click", downloadDot);
+    document.getElementById("downloadSvg").addEventListener("click", downloadSvg);
+    
+    /***********************
+     * Event Listeners
+     ***********************/
+    document.getElementById('updateYaml').addEventListener('click', parseYaml);
+    document.getElementById('previewMode').addEventListener('change', updateSelectionDropdown);
+    
+    document.getElementById('selectionContainer').addEventListener('change', function (e) {
+      if (e.target && e.target.id === 'itemSelector') {
+        updatePreview();
+      }
+    });
+    
+    document.getElementById('animSlider').addEventListener('input', function () {
+      pauseAnimation();
+      currentFrameIndex = parseInt(this.value);
+      renderAnimationFrame(currentFrameIndex);
+    });
+    
+    document.getElementById('playBtn').addEventListener('click', startAnimation);
+    document.getElementById('pauseBtn').addEventListener('click', pauseAnimation);
+    document.getElementById('stopBtn').addEventListener('click', stopAnimation);
+    document.getElementById('rewindBtn').addEventListener('click', rewindAnimation);
+    
+    document.getElementById('delaySlider').addEventListener('input', updateDelay);
+  </script>
+
+  </body>
+</html>
+
