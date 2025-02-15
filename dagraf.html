@@ -380,7 +380,7 @@ include: function(graphName) {
     let animations = {};
     let monacoEditor = null;
 
-    const graphviz = d3.select("#graph").graphviz().logEvents(true);
+    const graphviz = d3.select("#graph").graphviz().engine("neato").logEvents(true);
 
     let animationTimer = null;
     let isPlaying = false;
@@ -400,15 +400,37 @@ include: function(graphName) {
 graphs:
   - name: graph1
     dot: |-
-        pod [style="invis" shape="box" real_style="filled"]
+        graph [pad="0.212,0.055" bgcolor=lightgray]
+        fw -> ingress -> svc
+        rs [pos = "-3,0!"]
+        dp -> rs 
+        dp [pos = "-5,0!"]
+        {% set items = [ "poda", "podb", "podc" ] %}
+        {% for item in items %}
+        rs -> {{ item }}
+        svc -> {{ item }}
+        {{ item }} [ style=filled fillcolor="green"]
+        {% endfor %}
 
   - name: graph2
     dot: |-
       # is a Jinja template
       # special function include should return dot content of graph1
       {{ include("graph1") }}
-      # any template is registered as function => should return resolved k8s.deployement template function
-      {{ k8s.dp("my-dp", "my-ns")}}
+
+
+
+  - name: graph3
+    dot: |-
+      graph [pad="0.212,0.055" bgcolor=lightgray]
+      node [style=filled]
+      a [fillcolor="#d62728" pos="0,0!"]
+      b [fillcolor="#1f77b4" pos="0,1!"]
+      c [fillcolor="#2ca02c" pos="2,2!"]
+      d [fillcolor="#ff7f0e" pos="-1,0!"]
+      a -> b
+      a -> c
+      a -> d      
 
 animation:
   - name: anim1
@@ -584,6 +606,7 @@ templates:
           console.log("No frames in animation.");
         }
       }
+
     }
     
     function renderAnimationFrame(frameIndex) {
@@ -691,6 +714,7 @@ templates:
                    .duration(0);
         });
       }
+      
     }
     
     function downloadText(text, filename) {
@@ -759,6 +783,8 @@ templates:
     document.getElementById('rewindBtn').addEventListener('click', rewindAnimation);
     
     document.getElementById('delaySlider').addEventListener('input', updateDelay);
+    
   </script> 
 </body>
 </html>
+
