@@ -308,112 +308,203 @@ include: function(graphName) {
       monaco.languages.register({ id: 'yaml' });
       monacoEditor = monaco.editor.create(document.getElementById('yamlEditor'), {
         value: `---
+# Définition des graphes de base et des variantes
 graphs:
   - name: base
     dot: |-
-        labelloc="t"
-        graph [pad="0.5,0.5"]
-        # pods
-        node [ style="filled,bold" fillcolor="green" ]
-        poda [ pos="-1,-1!" ]
-        podb [ pos="0,-1!"]
-        podc [ pos="1,-1!"]
+      graph [
+        layout="neato"
+        pad="1.0"
+        overlap=false
+      ]
 
-        # app
-        node [ style=rounded shape="box" ]
-        svcapp [ pos="0,0!" ]
-        rs [ label="replicaset" pos="-1,-2!"]
-        dp [ label="deployement(replicas 3)" pos="-1,-3!"]
-        dp -> rs
-        rs -> { poda, podb, podc }
+      {% set positions = {
+         "poda": "-2,-1!",
+         "podb": "0,-1!",
+         "podc": "3,-1!",
+         "svcapp": "0,0!",
+         "rs": "0,-2!",
+         "dp": "-4,-2!",
+         "lb": "0,3!",
+         "ingresssvc": "0,2!",
+         "ingress": "4,2!",
+         "ingpod": "-1,1!",
+         "ingpod2": "1,1!"
+      } %}
+      
+      {% macro pos(key) -%}
+      pos="{{ positions[key] }}"
+      {%- endmacro %}
 
-        # network
-        node [ style=solid ]
-        lb [ label="🔥 Load Balancer" pos="0,3!"]
-        ingresssvc [ label="👋 Ingress Service" pos="0,2!"]
-        ingress [ label ="📝Ingress Rule" ,pos="2,2!"]
-        ingress -> ingresssvc
-       
-        ingpod [ pos="-1,1!"]
-        ingpod2 [ pos="1,1!"]
-        edge [ style=filled fillcolor="green"]
-  
-  - name: graph1
+      // Configuration générale du graph
+      labelloc="t"
+      graph [
+        pad="0.5,0.5"
+        label=<
+          <br/><br/><br/>
+        >
+      ]
+      
+      // Définition des Pods
+      node [
+        style="filled"
+        fillcolor="lightgreen"
+        label="🐋 app pod"
+      ]
+      poda [ {{ pos("poda") }} ]
+      podb [ {{ pos("podb") }} ]
+      podc [ {{ pos("podc") }} ]
+      
+      // Définition de l'applicatif
+      svcapp [
+        label=<
+          🚀 App Service<br/>(Type: ClusterIp)
+        >
+        shape=egg
+        {{ pos("svcapp") }} style=solid
+      ]
+      
+      node [ style=rounded shape="box" ]
+      rs [
+        label=<
+          Replicaset.<br/>
+          Contrôle la réplication des Pods
+        >
+        {{ pos("rs") }}
+      ]
+      dp [
+        label=<
+          Deployment<br/>
+          Décrit les caractéristiques des Pods
+        >
+        {{ pos("dp") }}
+      ]
+      dp -> rs
+      rs -> { poda, podb, podc }
+      
+      // Configuration du réseau
+      node [ style=solid ]
+      lb [ label="🔥 Load Balancer" {{ pos("lb") }} ]
+      ingresssvc [
+        shape=egg
+        label=<
+          🔗 Nginx Service<br/>(Type Load Balancer)
+        >
+        {{ pos("ingresssvc") }}
+      ]
+      ingress [
+        label=<
+          📝 Ingress<br/>
+          Mappe les hostname et paths<br/>
+          et configure Nginx<br/>
+          pour pointer vers les services applicatifs
+        >
+        {{ pos("ingress") }}
+      ]
+      ingress -> ingresssvc
+      
+      // Définition des Pods Nginx
+      ingpod, ingpod2 [
+        style="filled"
+        fillcolor="lightgreen"
+        shape="oval"
+        label="🐋 Nginx Pod"
+      ]
+      ingpod [ {{ pos("ingpod") }} ]
+      ingpod2 [ {{ pos("ingpod2") }} ]
+      
+      // Style par défaut pour les liens
+      edge [ style=filled fillcolor="green" ]
+
+  - name: lb-to-ingress
     dot: |-
       {{ include("base") }}
       lb -> ingresssvc
-
-      graph [ label=<
-      service (svc) acts as load balancer<br/>
-      ingress routes incoming traffic <br/>
-      to service
-      >]
-
-  - name: graph11
-    dot: |-
-      {{ include("graph1") }}
-      edge [ style=filled fillcolor="green"]
-      {ingpod, ingpod2} -> svcapp
-      svcapp -> { poda, podb, podc} 
-      graph [ label=<
-      service (svc) acts as load balancer<br/>
-      ingress routes incoming traffic <br/>
-      to service
-      >]
-
-  - name: graph2
-    dot: |-
-      {{ include("graph1") }}
-      edge [ style=filled fillcolor="green"]
-      {ingpod, ingpod2} -> svcapp
- 
-      svcapp -> { poda, podb, podc} 
-      podc [ fillcolor="orange" ]
-      graph [ label=<
-      if Readiness probe is down <br/>
-      pod becomes not ready status...
-      >
+      graph [
+        label=<
+          Le Load Balancer achemine le trafic vers le service Nginx Ingress.<br/>&nbsp;<br/>&nbsp;
+        >
       ]
 
-  - name: graph3
+  - name: ingress-to-app-blink
     dot: |-
-      {{ include("graph1") }}
-      podc [ fillcolor="orange" ]
-      edge [ style=filled fillcolor="green"]
+      {{ include("lb-to-ingress") }}
+      edge [ style=filled fillcolor="green" ]
+      {ingpod, ingpod2} -> svcapp   
+      graph [
+        label=<
+          Le service "Ingress-nginx" agit comme un load balancer interne pour Kubernetes,<br/>
+          en utilisant le type LoadBalancer (plutôt que ClusterIP ou NodePort).<br/>&nbsp;
+        >
+      ]
+
+  - name: ingress-to-app
+    dot: |-
+      {{ include("ingress-to-app-blink") }}
+      ingresssvc -> {ingpod, ingpod2}
+      svcapp -> { poda, podb, podc }
+
+  - name: pod-not-ready
+    dot: |-
+      {{ include("lb-to-ingress") }}
+      edge [ style=filled fillcolor="green" ]
+      ingresssvc -> {ingpod, ingpod2}
       {ingpod, ingpod2} -> svcapp
-      svcapp -> { poda, podb} 
-      graph [ label=<and is removed from service <br/>
-      load balancing
-      >]
+      svcapp -> { poda, podb, podc }
+      podc [ fillcolor="orange" style="filled,bold" ]
+      graph [
+        label=<
+          Si une sonde ne répond plus, le Pod passe à l'état <b>Ready: False</b>.<br/><br/>
+        >
+      ]
 
-  - name: graph4
+  - name: pod-out-of-traffic
     dot: |-
-      {{ include("graph1") }}
-      graph [ label=<
-      if pod becomes ready again<br/>
-      pod comes back in service<br/>
-      load balancer
-      >]
-      podc [ fillcolor="green" ]
+      {{ include("lb-to-ingress") }}
+      podc [ fillcolor="orange" style="filled,bold" ]
+      edge [ style=filled fillcolor="green" ]
+      ingresssvc -> {ingpod, ingpod2}
+      {ingpod, ingpod2} -> svcapp
+      svcapp -> { poda, podb }
+      graph [
+        label=<
+          Le Pod est retiré du trafic du service.<br/><br/><br/>
+        >
+      ]
 
+  - name: pod-rejoins-service
+    dot: |-
+      {{ include("lb-to-ingress") }}
+      graph [
+        label=<
+          Lorsque le Pod redevient <b>Ready: True</b>,<br/>
+          il réintègre le trafic du service.<br/><br/>
+        >
+      ]
+      edge [ style=filled fillcolor="green" ]
+      ingresssvc -> {ingpod, ingpod2}
+      {ingpod, ingpod2} -> svcapp
+      svcapp -> { poda, podb, podc }
+      podc [ fillcolor="lightgreen" ]
 
+  - name: pod-rejoins-service-bold
+    dot: |-
+      {{ include("pod-rejoins-service") }}
+      podc [ style="filled,bold" fillcolor="lightgreen" ]
+
+# Définition de l'animation
 animation:
   - name: anim1
     graphs:
       - base
-      - graph1
-      - graph11
-      - graph2
-      - graph3
-      - graph4
-
-templates:
-  - name: k8s.dp
-    template: |-
-      [label="{{ name }} - {{ namespace }}" ]
-    args:
-      - name
-      - namespace
+      - lb-to-ingress
+      - ingress-to-app
+      - ingress-to-app-blink
+      - ingress-to-app
+      - pod-not-ready
+      - pod-out-of-traffic
+      - pod-rejoins-service-bold
+      - pod-rejoins-service
 `,
         language: 'yaml',
         theme: 'vs-dark',
