@@ -7,6 +7,7 @@
   <script src="https://d3js.org/d3.v7.min.js"></script>
   <script src="https://unpkg.com/@hpcc-js/wasm@2.20.0/dist/graphviz.umd.js"></script>
   <script src="https://unpkg.com/d3-graphviz@5.6.0/build/d3-graphviz.js"></script>
+  
   <script src="https://cdnjs.cloudflare.com/ajax/libs/js-yaml/4.1.0/js-yaml.min.js"></script>
   <script src="https://unpkg.com/graphlib@2.1.8/dist/graphlib.min.js"></script>
   <script src="https://unpkg.com/graphlib-dot@0.6.4/dist/graphlib-dot.min.js"></script>
@@ -17,6 +18,10 @@
   <script src="https://unpkg.com/nunjucks@3.2.4/browser/nunjucks.js"></script>
   
   <style>
+    /* #graph svg {
+    height: 100%;
+    width: 100%;
+    } */
     body { margin: 0; }
     .container {
       display: flex;
@@ -42,7 +47,7 @@
     }
   </style>
   
-  <!-- Load RequireJS (only used here for Monaco) -->
+  <!-- Load RequireJS  -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.3.6/require.min.js"></script>
   <script>
 require.config({
@@ -141,104 +146,7 @@ require(['nunjucks'], function(nunjucksInstance) {
   
   <!-- Application Scripts -->
   <script>
-    // Helper functions for processing DOT text.
-    function parseAttributes(attrStr) {
-      if (!attrStr) return {};
-      const attrs = {};
-      const regex = /(\w+)\s*=\s*(<([\s\S]*?)>|"([^"]*)"|([^",\s]+))/g;
-      let match;
-      while ((match = regex.exec(attrStr)) !== null) {
-        const key = match[1];
-        const value = match[3] !== undefined ? match[3] :
-                      match[4] !== undefined ? match[4] :
-                      match[5];
-        attrs[key] = value;
-      }
-      return attrs;
-    }
-
-    function stringifyAttributes(attrs) {
-      const parts = [];
-      for (let key in attrs) {
-        parts.push(key + '="' + attrs[key] + '"');
-      }
-      return parts.join(", ");
-    }
-
-function preprocessDot(dotText) {
-  console.log("Preprocessing DOT...", dotText);
-  const globalRegex = /(\w+)\s*\[\s*([^\]]+?)\s*\]/g;
-  let nodeDict = {};
-  let match;
-  while ((match = globalRegex.exec(dotText)) !== null) {
-     let nodeName = match[1];
-     let attrStr = match[2];
-     nodeDict[nodeName] = {
-         raw: attrStr,
-         attrs: parseAttributes(attrStr)
-     };
-  }
-  let effectiveCache = {};
-  function computeEffectiveAttributes(nodeName) {
-     if (effectiveCache[nodeName]) return effectiveCache[nodeName];
-     let node = nodeDict[nodeName];
-     if (!node) return {};
-     let effective = {};
-     if (node.attrs.inherit && node.attrs.inherit.trim() !== "") {
-          let parents = node.attrs.inherit.split(",").map(s => s.trim());
-          parents.forEach(parentName => {
-             let parentEff = computeEffectiveAttributes(parentName);
-             let inherited = Object.assign({}, parentEff);
-             if (inherited.style === "invis") {
-                delete inherited.style;
-                if (inherited.real_style) inherited.style = inherited.real_style;
-             }
-             delete inherited.real_style;
-             effective = Object.assign({}, effective, inherited);
-          });
-     }
-     let ownAttrs = Object.assign({}, node.attrs);
-     delete ownAttrs.inherit;
-     effective = Object.assign({}, effective, ownAttrs);
-     if (effective.style === "invis") delete effective.style;
-     if ("real_style" in effective) {
-         if (!("style" in effective)) effective.style = effective.real_style;
-         delete effective.real_style;
-     }
-     effectiveCache[nodeName] = effective;
-     return effective;
-  }
-  
-  let replaced = dotText.replace(globalRegex, function(fullMatch, nodeName, attrStr) {
-     let attrs = parseAttributes(attrStr);
-     if (!attrs.inherit) return fullMatch;
-     let effective = computeEffectiveAttributes(nodeName);
-     let newAttrStr = stringifyAttributes(effective);
-     return nodeName + " [ " + newAttrStr + " ]";
-  });
-
-  console.log("replaced...", replaced);
-  return replaced;
-}
-
-        
-    // Template and common code processing functions.
-    let commons = [];
-    let templateFunctions = [];
-    
-    function includeCommons(dot) {
-      if (commons && commons.length > 0) {
-        let commonCode = "";
-        commons.forEach(c => {
-          if (c.dot) {
-            commonCode += c.dot + "\n";
-          }
-        });
-        dot = commonCode + dot;
-      }
-      return dot;
-    }
-
+      
     function renderTemplatesInDot(dot) {
       console.log("Rendering templates in DOT...",dot);
       let context = {
@@ -250,8 +158,6 @@ include: function(graphName) {
   }
   // Process the included graph content:
   importedDot = applyTemplateProcessing(importedDot);
-  importedDot = preprocessDot(importedDot);
-  
   // Unwrap an outer "digraph { ... }" or "graph { ... }" if present.
   let wrapperRegex = /^\s*(digraph|graph)\s*\{\s*([\s\S]*?)\s*\}\s*$/;
   let match = importedDot.match(wrapperRegex);
@@ -308,7 +214,6 @@ include: function(graphName) {
     }
     
     function applyTemplateProcessing(dot) {
-      dot = includeCommons(dot);
       dot = renderTemplatesInDot(dot);
       return dot;
     }
@@ -379,6 +284,12 @@ include: function(graphName) {
     let graphMap = {};
     let animations = {};
     let monacoEditor = null;
+    // const graphContainer = d3.select("#graph");
+    // const width = graphContainer.node().clientWidth;
+    // const height = graphContainer.node().clientHeight;
+
+    // const graphviz = d3.select("#graph").width(width)
+    // .height(height).graphviz().engine("neato").logEvents(true);
 
     const graphviz = d3.select("#graph").graphviz().engine("neato").logEvents(true);
 
@@ -398,45 +309,103 @@ include: function(graphName) {
       monacoEditor = monaco.editor.create(document.getElementById('yamlEditor'), {
         value: `---
 graphs:
+  - name: base
+    dot: |-
+        labelloc="t"
+        graph [pad="0.5,0.5"]
+        # pods
+        node [ style="filled,bold" fillcolor="green" ]
+        poda [ pos="-1,-1!" ]
+        podb [ pos="0,-1!"]
+        podc [ pos="1,-1!"]
+
+        # app
+        node [ style=rounded shape="box" ]
+        svcapp [ pos="0,0!" ]
+        rs [ label="replicaset" pos="-1,-2!"]
+        dp [ label="deployement(replicas 3)" pos="-1,-3!"]
+        dp -> rs
+        rs -> { poda, podb, podc }
+
+        # network
+        node [ style=solid ]
+        lb [ label="🔥 Load Balancer" pos="0,3!"]
+        ingresssvc [ label="👋 Ingress Service" pos="0,2!"]
+        ingress [ label ="📝Ingress Rule" ,pos="2,2!"]
+        ingress -> ingresssvc
+       
+        ingpod [ pos="-1,1!"]
+        ingpod2 [ pos="1,1!"]
+        edge [ style=filled fillcolor="green"]
+  
   - name: graph1
     dot: |-
-        graph [pad="0.212,0.055" bgcolor=lightgray]
-        fw -> ingress -> svc
-        rs [pos = "-3,0!"]
-        dp -> rs 
-        dp [pos = "-5,0!"]
-        {% set items = [ "poda", "podb", "podc" ] %}
-        {% for item in items %}
-        rs -> {{ item }}
-        svc -> {{ item }}
-        {{ item }} [ style=filled fillcolor="green"]
-        {% endfor %}
+      {{ include("base") }}
+      lb -> ingresssvc
+
+      graph [ label=<
+      service (svc) acts as load balancer<br/>
+      ingress routes incoming traffic <br/>
+      to service
+      >]
+
+  - name: graph11
+    dot: |-
+      {{ include("graph1") }}
+      edge [ style=filled fillcolor="green"]
+      {ingpod, ingpod2} -> svcapp
+      svcapp -> { poda, podb, podc} 
+      graph [ label=<
+      service (svc) acts as load balancer<br/>
+      ingress routes incoming traffic <br/>
+      to service
+      >]
 
   - name: graph2
     dot: |-
-      # is a Jinja template
-      # special function include should return dot content of graph1
       {{ include("graph1") }}
-
-
+      edge [ style=filled fillcolor="green"]
+      {ingpod, ingpod2} -> svcapp
+ 
+      svcapp -> { poda, podb, podc} 
+      podc [ fillcolor="orange" ]
+      graph [ label=<
+      if Readiness probe is down <br/>
+      pod becomes not ready status...
+      >
+      ]
 
   - name: graph3
     dot: |-
-      graph [pad="0.212,0.055" bgcolor=lightgray]
-      node [style=filled]
-      a [fillcolor="#d62728" pos="0,0!"]
-      b [fillcolor="#1f77b4" pos="0,1!"]
-      c [fillcolor="#2ca02c" pos="2,2!"]
-      d [fillcolor="#ff7f0e" pos="-1,0!"]
-      a -> b
-      a -> c
-      a -> d      
+      {{ include("graph1") }}
+      podc [ fillcolor="orange" ]
+      edge [ style=filled fillcolor="green"]
+      {ingpod, ingpod2} -> svcapp
+      svcapp -> { poda, podb} 
+      graph [ label=<and is removed from service <br/>
+      load balancing
+      >]
+
+  - name: graph4
+    dot: |-
+      {{ include("graph1") }}
+      graph [ label=<
+      if pod becomes ready again<br/>
+      pod comes back in service<br/>
+      load balancer
+      >]
+      podc [ fillcolor="green" ]
+
 
 animation:
   - name: anim1
     graphs:
+      - base
       - graph1
+      - graph11
       - graph2
+      - graph3
+      - graph4
 
 templates:
   - name: k8s.dp
@@ -453,7 +422,7 @@ templates:
       
       monacoEditor.onDidChangeModelContent(function() {
         clearTimeout(yamlDebounceTimer);
-        yamlDebounceTimer = setTimeout(parseYaml, 500);
+        yamlDebounceTimer = setTimeout(parseYaml, 800);
       });
       
       parseYaml();
@@ -575,19 +544,13 @@ templates:
         console.log("got graph", dot)
         dot = applyTemplateProcessing(dot);
         console.log("got templated", dot)
-        //dot = preprocessDot(dot);
-        //console.log("got pre-processed", dot)
         dot = ensureGraphWrapper(dot);
         console.log("got wrapped", dot)
-        isTransitioning = true;
-        console.log("graphvizRender", dot)
-        graphviz.renderDot(dot)
-          .on("end", function () { isTransitioning = false; })
-          .on("error", function(error) {
-            isTransitioning = false;
-            console.error("Graphviz render error:", error);
-            document.getElementById("graph").innerHTML = "<div style='color:red;'>Graph rendering error. Please check your DOT input.</div>";
-          });
+        try {
+          graphviz.renderDot(dot,isTransitioning=false)
+        } catch (e) {
+          console.error("Error rendering graph:", e);
+        }
       } else if (document.getElementById('previewMode').value === "animation") {
         const itemSelector = document.getElementById('itemSelector');
         if (!itemSelector) return;
@@ -617,17 +580,20 @@ templates:
       const graphName = currentAnimationFrames[frameIndex];
       let dot = getGraphDot(graphName);
       dot = applyTemplateProcessing(dot);
-      dot = preprocessDot(dot);
       dot = ensureGraphWrapper(dot);
       document.getElementById("animSlider").value = frameIndex;
       isTransitioning = true;
-      graphviz.renderDot(dot)
-        .on("end", function () { isTransitioning = false; })
-        .on("error", function(error) {
-          isTransitioning = false;
-          console.error("Graphviz render error:", error);
-          document.getElementById("graph").innerHTML = "<div style='color:red;'>Graph rendering error. Please check your DOT input.</div>";
-        });
+      try {
+        graphviz.growEnteringEdges(true).renderDot(dot
+        // ,
+        // () => {
+        //   d3.selectAll('.node').style('filter','drop-shadow( 3px 3px 2px rgba(0, 0, 0, .2))');
+        // }
+    )
+          .on("end", function () { isTransitioning = false; })
+      } catch (e) {
+        console.error("Error rendering graph:", e);
+      }
     }
     
     function startAnimation() {
@@ -650,6 +616,7 @@ templates:
     }
     
     function nextAnimationFrame() {
+      console.log("!!nextAnimationFrame!!", currentFrameIndex, currentAnimationFrames.length);
       currentFrameIndex++;
       if (currentFrameIndex >= currentAnimationFrames.length) {
         if (document.getElementById("loopCheckbox").checked) {
@@ -762,7 +729,9 @@ templates:
     document.getElementById("downloadDot").addEventListener("click", downloadDot);
     document.getElementById("downloadSvg").addEventListener("click", downloadSvg);
     
-    document.getElementById('updateYaml').addEventListener('click', parseYaml);
+    document.getElementById('updateYaml').addEventListener('click', function () {          //ugly hack
+          graphviz.renderDot("digraph { node [style=invis] }",isTransitioning=false);
+            parseYaml() } );
     document.getElementById('previewMode').addEventListener('change', updateSelectionDropdown);
     
     document.getElementById('selectionContainer').addEventListener('change', function (e) {
