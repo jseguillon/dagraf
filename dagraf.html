@@ -319,9 +319,9 @@ graphs:
       ]
 
       {% set positions = {
-         "poda": "-2,-1!",
-         "podb": "0,-1!",
-         "podc": "3,-1!",
+         "appPodA": "-2,-1!",
+         "appPodB": "0,-1!",
+         "appPodC": "3,-1!",
          "svcapp": "0,0!",
          "rs": "0,-2!",
          "dp": "-4,-2!",
@@ -336,6 +336,23 @@ graphs:
       pos="{{ positions[key] }}"
       {%- endmacro %}
 
+      {% macro nodePod(fillcolor='lightgreen') -%}
+      node [
+        style="filled"
+        shape="oval"
+        fillcolor="{{ fillcolor }}"
+      ]
+      {%- endmacro %}
+
+      {% macro nodeSvc() -%}
+      node [
+        shape=egg
+        style=solid
+      ]
+      {%- endmacro %}
+      {%- macro nodeApp() %}
+      node [ style=rounded shape="box" ]
+      {%- endmacro %}
       // Configuration générale du graph
       labelloc="t"
       graph [
@@ -346,25 +363,19 @@ graphs:
       ]
       
       // Définition des Pods
-      node [
-        style="filled"
-        fillcolor="lightgreen"
-        label="🐋 app pod"
-      ]
-      poda [ {{ pos("poda") }} ]
-      podb [ {{ pos("podb") }} ]
-      podc [ {{ pos("podc") }} ]
+      {{ nodePod()}}
+      node [ label="🐋 App Pod"]
+      appPodA [ {{ pos("appPodA") }} ]
+      appPodB [ {{ pos("appPodB") }} ]
+      appPodC [ {{ pos("appPodC") }} ]
       
       // Définition de l'applicatif
-      svcapp [
-        label=<
-          🚀 App Service<br/>(Type: ClusterIp)
-        >
-        shape=egg
-        {{ pos("svcapp") }} style=solid
-      ]
+      {{ nodeSvc() }}
+      svcapp [ label=<
+      🚀 App Service<br/>(Type: ClusterIp)
+      > {{ pos("svcapp") }} ]
       
-      node [ style=rounded shape="box" ]
+      {{ nodeApp() }}
       rs [
         label=<
           Replicaset.<br/>
@@ -380,18 +391,12 @@ graphs:
         {{ pos("dp") }}
       ]
       dp -> rs
-      rs -> { poda, podb, podc }
+      rs -> { appPodA, appPodB, appPodC }
       
       // Configuration du réseau
       node [ style=solid ]
       lb [ label="🔥 Load Balancer" {{ pos("lb") }} ]
-      ingresssvc [
-        shape=egg
-        label=<
-          🔗 Nginx Service<br/>(Type Load Balancer)
-        >
-        {{ pos("ingresssvc") }}
-      ]
+
       ingress [
         label=<
           📝 Ingress<br/>
@@ -401,15 +406,20 @@ graphs:
         >
         {{ pos("ingress") }}
       ]
+      
+      {{ nodeSvc() }}
+      ingresssvc [
+        label=<
+          🔗 Nginx Service<br/>(Type Load Balancer)
+        >
+        {{ pos("ingresssvc") }}
+      ]
+      
       ingress -> ingresssvc
       
       // Définition des Pods Nginx
-      ingpod, ingpod2 [
-        style="filled"
-        fillcolor="lightgreen"
-        shape="oval"
-        label="🐋 Nginx Pod"
-      ]
+      {{ nodePod()}}
+      node [ label="🐋 Nginx Pod"]
       ingpod [ {{ pos("ingpod") }} ]
       ingpod2 [ {{ pos("ingpod2") }} ]
       
@@ -442,7 +452,7 @@ graphs:
     dot: |-
       {{ include("ingress-to-app-blink") }}
       ingresssvc -> {ingpod, ingpod2}
-      svcapp -> { poda, podb, podc }
+      svcapp -> { appPodA, appPodB, appPodC }
 
   - name: pod-not-ready
     dot: |-
@@ -450,8 +460,8 @@ graphs:
       edge [ style=filled fillcolor="green" ]
       ingresssvc -> {ingpod, ingpod2}
       {ingpod, ingpod2} -> svcapp
-      svcapp -> { poda, podb, podc }
-      podc [ fillcolor="orange" style="filled,bold" ]
+      svcapp -> { appPodA, appPodB, appPodC }
+      appPodC [ fillcolor="orange" style="filled,bold" ]
       graph [
         label=<
           Si une sonde ne répond plus, le Pod passe à l'état <b>Ready: False</b>.<br/><br/>
@@ -461,11 +471,11 @@ graphs:
   - name: pod-out-of-traffic
     dot: |-
       {{ include("lb-to-ingress") }}
-      podc [ fillcolor="orange" style="filled,bold" ]
+      appPodC [ fillcolor="orange" style="filled,bold" ]
       edge [ style=filled fillcolor="green" ]
       ingresssvc -> {ingpod, ingpod2}
       {ingpod, ingpod2} -> svcapp
-      svcapp -> { poda, podb }
+      svcapp -> { appPodA, appPodB }
       graph [
         label=<
           Le Pod est retiré du trafic du service.<br/><br/><br/>
@@ -484,13 +494,13 @@ graphs:
       edge [ style=filled fillcolor="green" ]
       ingresssvc -> {ingpod, ingpod2}
       {ingpod, ingpod2} -> svcapp
-      svcapp -> { poda, podb, podc }
-      podc [ fillcolor="lightgreen" ]
+      svcapp -> { appPodA, appPodB, appPodC }
+      appPodC [ fillcolor="lightgreen" ]
 
   - name: pod-rejoins-service-bold
     dot: |-
       {{ include("pod-rejoins-service") }}
-      podc [ style="filled,bold" fillcolor="lightgreen" ]
+      appPodC [ style="filled,bold" fillcolor="lightgreen" ]
 
 # Définition de l'animation
 animation:
